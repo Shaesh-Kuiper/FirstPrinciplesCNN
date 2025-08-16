@@ -1,4 +1,5 @@
 #include <iostream>
+#include <iomanip>
 #include <vector>
 #include <numeric>
 #include <algorithm>
@@ -75,17 +76,85 @@ int main() {
     }
 
     std::cout << "[INFO] Validating against holdout set...\n";
-    thread_models[0].is_training = false; 
+    thread_models[0].is_training = false;
 
-    float accuracy = 0;
+    const int NUM_CLASSES = 10;
+    const char* CLASS_NAMES[NUM_CLASSES] = {
+        "T-shirt/top", "Trouser", "Pullover", "Dress", "Coat",
+        "Sandal", "Shirt", "Sneaker", "Bag", "Ankle boot"
+    };
+    const char* SHORT_NAMES[NUM_CLASSES] = {
+        "T-sht", "Trsr", "Pull", "Drss", "Coat",
+        "Sndl", "Shrt", "Snkr", "Bag", "Ankl"
+    };
+
+    std::vector<std::vector<int>> conf(NUM_CLASSES, std::vector<int>(NUM_CLASSES, 0));
+    int correct = 0;
+
     for (int i = 0; i < test_count; ++i) {
         int id = indices[train_count + i];
-        auto logits = thread_models[0].forward(all_images[id]); 
+        auto logits = thread_models[0].forward(all_images[id]);
         int pred = std::distance(logits.begin(), std::max_element(logits.begin(), logits.end()));
-        if(pred == all_labels[id]) accuracy++;
+        conf[all_labels[id]][pred]++;
+        if (pred == all_labels[id]) correct++;
     }
 
-    std::cout << "Final Test Accuracy: " << (accuracy / test_count) * 100.0f << "%\n";
+    std::vector<int> row_sum(NUM_CLASSES, 0), col_sum(NUM_CLASSES, 0);
+    for (int i = 0; i < NUM_CLASSES; ++i)
+        for (int j = 0; j < NUM_CLASSES; ++j) {
+            row_sum[i] += conf[i][j];
+            col_sum[j] += conf[i][j];
+        }
+
+    std::vector<float> prec(NUM_CLASSES), rec(NUM_CLASSES), f1(NUM_CLASSES);
+    for (int c = 0; c < NUM_CLASSES; ++c) {
+        prec[c] = (col_sum[c] > 0) ? (float)conf[c][c] / col_sum[c] : 0.0f;
+        rec[c]  = (row_sum[c] > 0) ? (float)conf[c][c] / row_sum[c] : 0.0f;
+        f1[c]   = (prec[c] + rec[c] > 0.0f) ? 2.0f * prec[c] * rec[c] / (prec[c] + rec[c]) : 0.0f;
+    }
+
+    float macro_p = 0.0f, macro_r = 0.0f, macro_f1 = 0.0f;
+    for (int c = 0; c < NUM_CLASSES; ++c) { macro_p += prec[c]; macro_r += rec[c]; macro_f1 += f1[c]; }
+    macro_p /= NUM_CLASSES; macro_r /= NUM_CLASSES; macro_f1 /= NUM_CLASSES;
+
+    const int LBL_W = 13, CELL_W = 6;
+    const std::string SEP(LBL_W + 1 + NUM_CLASSES * CELL_W + 2, '-');
+
+    std::cout << "\n=== CONFUSION MATRIX (rows=Actual, cols=Predicted) ===\n\n";
+    std::cout << std::setw(LBL_W + 1) << "";
+    for (int j = 0; j < NUM_CLASSES; ++j) std::cout << std::setw(CELL_W) << SHORT_NAMES[j];
+    std::cout << "\n" << SEP << "\n";
+    for (int i = 0; i < NUM_CLASSES; ++i) {
+        std::cout << std::right << std::setw(LBL_W) << CLASS_NAMES[i] << "|";
+        for (int j = 0; j < NUM_CLASSES; ++j) std::cout << std::setw(CELL_W) << conf[i][j];
+        std::cout << " |\n";
+    }
+    std::cout << SEP << "\n";
+
+    std::cout << "\n=== PER-CLASS METRICS ===\n\n";
+    std::cout << std::left  << std::setw(14) << "Class"
+              << std::right << std::setw(11) << "Precision"
+              << std::setw(9)  << "Recall"
+              << std::setw(11) << "F1-Score"
+              << std::setw(9)  << "Support" << "\n";
+    std::cout << std::string(54, '-') << "\n";
+    std::cout << std::fixed << std::setprecision(4);
+    for (int c = 0; c < NUM_CLASSES; ++c) {
+        std::cout << std::left  << std::setw(14) << CLASS_NAMES[c]
+                  << std::right << std::setw(11) << prec[c]
+                  << std::setw(9)  << rec[c]
+                  << std::setw(11) << f1[c]
+                  << std::setw(9)  << row_sum[c] << "\n";
+    }
+    std::cout << std::string(54, '-') << "\n";
+    std::cout << std::left  << std::setw(14) << "Macro Avg"
+              << std::right << std::setw(11) << macro_p
+              << std::setw(9)  << macro_r
+              << std::setw(11) << macro_f1
+              << std::setw(9)  << test_count << "\n";
+
+    std::cout << "\nFinal Test Accuracy: " << std::setprecision(2)
+              << (float)correct / test_count * 100.0f << "%\n";
     thread_models[0].save_weights("tinyvgg_fashion_mnist.bin");
 
     return 0;
